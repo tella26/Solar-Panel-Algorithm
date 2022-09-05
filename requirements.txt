@@ -4,3 +4,4 @@ torch
 torch_optimizer
 torchstat
 torchvision
+torchmetrics
