@@ -7,9 +7,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torchvision import datasets, transforms
-import matplotlib.pyplot as plt
-
-from torchmetrics import F1Score, PrecisionRecallCurve
 
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
@@ -118,6 +115,7 @@ class ResNet(nn.Module):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
         self.avgpool = nn.AvgPool2d(7, stride=1)
         self.fc = nn.Linear(512 * 4, num_classes)
+  
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -187,54 +185,48 @@ def resnet34(pretrained=False, **kwargs):
     return model
 
 
+'''Training pipeline'''
 
-def resnet50(pretrained=True, **kwargs):
-    """Constructs a ResNet-50 model.
+def train(args, model, device, train_loader, optimizer, epoch):
+    model.train()
+    for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
+        optimizer.zero_grad()
+        output = model(data)
+        loss = F.nll_loss(output, target)
+        loss.backward()
+        optimizer.step()
+        if batch_idx % args.log_interval == 0:
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * len(data), len(train_loader.dataset),
+                100. * batch_idx / len(train_loader), loss.item()))
 
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-    """
-    model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet50']))
-    return model
+def test(args, model, device, test_loader):
+    model.eval()
+    test_loss = 0
+    correct = 0
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            test_loss += F.nll_loss(output, target, reduction='sum').item() # sum up batch loss
+            pred = output.argmax(dim=1, keepdim=True) # get the index of the max log-probability
+            correct += pred.eq(target.view_as(pred)).sum().item()
 
+    test_loss /= len(test_loader.dataset)
 
-
-def resnet101(pretrained=True, **kwargs):
-    """Constructs a ResNet-101 model.
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-    """
-    model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet101']))
-    return model
-
-
-
-def resnet152(pretrained=True, **kwargs):
-    """Constructs a ResNet-152 model.
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained 
-    """
-    model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet152']))
-    return model
-
-
+    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
+        test_loss, correct, len(test_loader.dataset),
+        100. * correct / len(test_loader.dataset)))
 
 def main():
     # Training settings
-    parser = argparse.ArgumentParser(description='PyTorch Solar Panel Defect')
-    parser.add_argument('--batch-size', type=int, default=2, metavar='N',
+    parser = argparse.ArgumentParser(description='PyTorch Solar Panel Example')
+    parser.add_argument('--batch-size', type=int, default=64, metavar='N',
                         help='input batch size for training (default: 64)')
     parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
                         help='input batch size for testing (default: 1000)')
-    parser.add_argument('--epochs', type=int, default=2, metavar='N',
+    parser.add_argument('--epochs', type=int, default=3, metavar='N',
                         help='number of epochs to train (default: 10)')
     parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
                         help='learning rate (default: 0.01)')
@@ -248,7 +240,7 @@ def main():
                         help='how many batches to wait before logging training status')
     parser.add_argument('--save-model', action='store_true', default=False,
                         help='For Saving the current Model')
-
+    parser.add_argument('--model', type=str, required=True)
 
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
@@ -272,131 +264,50 @@ def main():
                        ])),
         batch_size=args.test_batch_size, shuffle=True, **kwargs)
 
-    return args, train_loader, test_loader, device
 
-    '''if (args.save_model):
-        torch.save(model.state_dict(),"Resnet.pt")'''
-
-def evaluate_classifier(args,train_loader, test_loader, device, epoch):
-    '''
-    Run multiple times with different classifiers to get an idea of the
-    relative performance of each configuration.
-
-    Returns a sequence of tuples containing:
-        (title, precision, recall)
-    for each learner.
-    '''
-    # Test the Resnet18
-    model_18 = resnet18().to(device)
-    optimizer = optim.SGD(model_18.parameters(), lr=args.lr, momentum=args.momentum)
-    for epoch in range(1, args.epochs + 1):
-        model_18.train()
-        for batch_idx, (data, target) in enumerate(train_loader):
-            data, target = data.to(device), target.to(device)
-            optimizer.zero_grad()
-            output = model_18(data)
-            loss = F.nll_loss(output, target)
-            loss.backward()
-            optimizer.step()
-            if batch_idx % args.log_interval == 0:
-                print('Resnet18 Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                    epoch, batch_idx * len(data), len(train_loader.dataset),
-                    100. * batch_idx / len(train_loader), loss.item()))
-        
-        model_18.eval()
-        with torch.no_grad():
-            for data, preds in test_loader:
-                data, preds = data.to(device), target.to(device)
-                output = model_18(data)
-        
-    f1_score = F1Score(num_classes=3) # adjust the number of classes
-    f1_score(preds, target)
-    # Generate the P-R curve
-    pr_curve = PrecisionRecallCurve(pos_label=1)
-    precision, recall, thresholds = pr_curve(preds, target)
-    # Include the score in the title
-    yield 'ResNet18 F1 Score:', f1_score, precision, recall, thresholds
-
-
-    # # Test the Resnet34
-    model_34 = resnet34().to(device)
-    optimizer = optim.SGD(model_34.parameters(), lr=args.lr, momentum=args.momentum)
-    for epoch in range(1, args.epochs + 1):
-        model_34.train()
-        for batch_idx, (data, target) in enumerate(train_loader):
-            data, target = data.to(device), target.to(device)
-            optimizer.zero_grad()
-            output = model_34(data)
-            loss = F.nll_loss(output, target)
-            loss.backward()
-            optimizer.step()
-            if batch_idx % args.log_interval == 0:
-                print('Resnet34 Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                    epoch, batch_idx * len(data), len(train_loader.dataset),
-                    100. * batch_idx / len(train_loader), loss.item()))
-        
-        model_34.eval()
-        with torch.no_grad():
-            for data, preds in test_loader:
-                data, preds = data.to(device), target.to(device)
-                output = model_34(data)
-                
-    f1_score = F1Score(num_classes=3) # adjust the number of classes
-    f1_score(preds, target)
-    # Generate the P-R curve
-    pr_curve = PrecisionRecallCurve(pos_label=1)
-    precision, recall, thresholds = pr_curve(preds, target)
-    # Include the score in the title
-    yield 'ResNet34 F1 Score:', f1_score, precision, recall, thresholds
-        
-# =====================================================================
-
-
-def plot(results):
-    '''
-    Create a plot comparing multiple learners.
-
-    `results` is a list of tuples containing:
-        (title, precision, recall)
     
-    All the elements in results will be plotted.
-    '''
+    
+    """Model Initialization"""
 
-    # Plot the precision-recall curves
+    if args.model == 'resnet18':
+        model = resnet18().to(device)
 
-    fig = plt.figure(figsize=(6, 6))
-    fig.canvas.set_window_title('Classifying data from ResNet')
+    elif args.model == 'resnet34':
+        model = resnet18().to(device)
 
-    for label, precision, thresholds, recall in results:
-        plt.plot(precision, label=label)
-        plt.plot(recall, label=label)
-        plt.plot(thresholds, label=label)
-        
+    
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
 
-    plt.title('Precision-Recall Curves')
-    plt.xlabel('Precision')
-    plt.ylabel('Recall')
-    plt.legend(loc='lower left')
+    for epoch in range(1, args.epochs + 1):
+        train(args, model, device, train_loader, optimizer, epoch)
+        test(args, model, device, test_loader)
 
-    # Let matplotlib improve the layout
-    plt.tight_layout()
-
-    # ==================================
-    # Display the plot in interactive UI
-    plt.show()
-    plt.close()
-
-
-# =====================================================================
+    if (args.save_model):
+        torch.save(model.state_dict(),"Resnet.pt")
         
         
 if __name__ == '__main__':
-    args,train_loader, test_loader, device = main()
+    main()
     
-     # Evaluate multiple classifiers on the data
-    print("Evaluating classifiers")
-    results = list(evaluate_classifier(args, train_loader, test_loader, device, args.epochs))
-
-    # Display the results
-    print("Plotting the results")
-    plot(results)
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+   

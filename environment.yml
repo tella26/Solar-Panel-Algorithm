@@ -6,3 +6,4 @@ dependencies:
   - matplotlib
   - scikit-learn
   - torch
+  - torchmetrics
